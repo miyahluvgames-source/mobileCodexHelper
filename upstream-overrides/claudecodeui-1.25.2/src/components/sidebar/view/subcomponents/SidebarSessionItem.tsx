@@ -74,39 +74,46 @@ export default function SidebarSessionItem({
       <div className="md:hidden">
         <div
           className={cn(
-            'p-2 mx-3 my-0.5 rounded-md bg-card border active:scale-[0.98] transition-all duration-150 relative',
-            isSelected ? 'bg-primary/5 border-primary/20' : '',
+            'relative mx-3 my-1 rounded-xl border px-3 py-2.5 active:scale-[0.98] transition-all duration-150',
+            isSelected ? 'border-primary/30 bg-primary/8 shadow-sm' : '',
             !isSelected && sessionView.isActive
               ? 'border-green-500/30 bg-green-50/5 dark:bg-green-900/5'
-              : 'border-border/30',
+              : 'border-border/40 bg-card/85',
           )}
           onClick={selectMobileSession}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-start gap-3">
             <div
               className={cn(
-                'w-5 h-5 rounded-md flex items-center justify-center flex-shrink-0',
-                isSelected ? 'bg-primary/10' : 'bg-muted/50',
+                'mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl',
+                isSelected ? 'bg-primary/10 text-primary' : 'bg-muted/60 text-muted-foreground',
               )}
             >
-              <SessionProviderLogo provider={session.__provider} className="h-3 w-3" />
+              <SessionProviderLogo provider={session.__provider} className="h-3.5 w-3.5" />
             </div>
 
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-foreground">{sessionView.sessionName}</div>
-              <div className="mt-0.5 flex items-center gap-1">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                  Session
+                </span>
+                {sessionView.isActive && (
+                  <span className="rounded-full bg-green-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-green-600 dark:text-green-400">
+                    Live
+                  </span>
+                )}
+              </div>
+              <div className="truncate text-sm font-semibold text-foreground">{sessionView.sessionName}</div>
+              <div className="mt-1 flex items-center gap-1.5">
                 <Clock className="h-2.5 w-2.5 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
                   {formatTimeAgo(sessionView.sessionTime, currentTime, t)}
                 </span>
                 {sessionView.messageCount > 0 && (
-                  <Badge variant="secondary" className="ml-auto px-1 py-0 text-xs">
+                  <Badge variant="secondary" className="ml-auto px-1.5 py-0 text-[10px]">
                     {sessionView.messageCount}
                   </Badge>
                 )}
-                <span className="ml-1 opacity-70">
-                  <SessionProviderLogo provider={session.__provider} className="h-3 w-3" />
-                </span>
               </div>
             </div>
 
@@ -129,16 +136,24 @@ export default function SidebarSessionItem({
         <Button
           variant="ghost"
           className={cn(
-            'w-full justify-start p-2 h-auto font-normal text-left hover:bg-accent/50 transition-colors duration-200',
-            isSelected && 'bg-accent text-accent-foreground',
+            'h-auto w-full justify-start rounded-xl border border-transparent p-2.5 text-left font-normal transition-colors duration-200 hover:bg-accent/50',
+            isSelected && 'border-primary/15 bg-accent text-accent-foreground',
           )}
           onClick={() => onSessionSelect(session, project.name)}
         >
           <div className="flex w-full min-w-0 items-start gap-2">
-            <SessionProviderLogo provider={session.__provider} className="mt-0.5 h-3 w-3 flex-shrink-0" />
+            <div className={cn(
+              'mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-xl',
+              isSelected ? 'bg-primary/10 text-primary' : 'bg-muted/60 text-muted-foreground',
+            )}>
+              <SessionProviderLogo provider={session.__provider} className="h-3.5 w-3.5" />
+            </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-xs font-medium text-foreground">{sessionView.sessionName}</div>
-              <div className="mt-0.5 flex items-center gap-1">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Session
+              </div>
+              <div className="truncate text-sm font-semibold text-foreground">{sessionView.sessionName}</div>
+              <div className="mt-1 flex items-center gap-1">
                 <Clock className="h-2.5 w-2.5 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
                   {formatTimeAgo(sessionView.sessionTime, currentTime, t)}
@@ -146,14 +161,11 @@ export default function SidebarSessionItem({
                 {sessionView.messageCount > 0 && (
                   <Badge
                     variant="secondary"
-                    className="ml-auto px-1 py-0 text-xs transition-opacity group-hover:opacity-0"
+                    className="ml-auto px-1.5 py-0 text-[10px] transition-opacity group-hover:opacity-0"
                   >
                     {sessionView.messageCount}
                   </Badge>
                 )}
-                <span className="ml-1 opacity-70 transition-opacity group-hover:opacity-0">
-                  <SessionProviderLogo provider={session.__provider} className="h-3 w-3" />
-                </span>
               </div>
             </div>
           </div>

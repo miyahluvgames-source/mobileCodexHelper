@@ -65,13 +65,17 @@ const projectsHaveChanges = (
 };
 
 const getProjectSessions = (project: Project): ProjectSession[] => {
+  const visibleCodexSessions = (project.codexSessions ?? []).filter(
+    (session) => !Boolean(session.isArchived),
+  );
+
   if (IS_CODEX_ONLY_HARDENED) {
-    return [...(project.codexSessions ?? [])];
+    return [...visibleCodexSessions];
   }
 
   return [
     ...(project.sessions ?? []),
-    ...(project.codexSessions ?? []),
+    ...visibleCodexSessions,
     ...(project.cursorSessions ?? []),
     ...(project.geminiSessions ?? []),
   ];

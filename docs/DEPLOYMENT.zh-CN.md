@@ -202,7 +202,9 @@ powershell -ExecutionPolicy Bypass -File scripts/enable-mobile-codex-remote.ps1
 执行后：
 
 - 在桌面控制工具里确认远程发布状态
-- 用手机打开 Tailscale 给出的私有 HTTPS 地址
+- 用手机打开 Tailscale 给出的私有地址
+- 当前已验证通过的默认入口优先是 `http://<hostname>`
+- 不要先假设 `https://<hostname>` 可用
 
 ## 第 10 步：首次设备批准
 
@@ -270,6 +272,19 @@ powershell -ExecutionPolicy Bypass -File scripts/enable-mobile-codex-remote.ps1
 - `tmp/logs/mobile-codex-app.stdout.log`
 - `tmp/logs/mobile-codex-app.stderr.log`
 - nginx 日志
+
+### Mac / iPhone / iPad 提示网页无法正常运作
+
+优先检查：
+
+- 访问的是不是 `http://<hostname>` 而不是 `https://<hostname>`
+- 设备是否已经加入同一个 Tailscale tailnet
+- 本机或设备上的代理是否拦截了 `*.ts.net` 或 tailnet 流量
+
+更完整说明见：
+
+- 中文：`docs/REMOTE_ACCESS.zh-CN.md`
+- English: `docs/REMOTE_ACCESS.md`
 
 ## 部署完成后建议自查
 

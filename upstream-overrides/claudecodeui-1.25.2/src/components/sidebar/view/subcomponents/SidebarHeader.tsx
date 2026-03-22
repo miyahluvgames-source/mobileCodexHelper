@@ -41,12 +41,17 @@ export default function SidebarHeader({
 }: SidebarHeaderProps) {
   const LogoBlock = () => (
     <div className="flex min-w-0 items-center gap-2.5">
-      <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-primary/90 shadow-sm">
+      <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl bg-primary/90 shadow-sm ring-1 ring-primary/20">
         <svg className="h-3.5 w-3.5 text-primary-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
       </div>
-      <h1 className="truncate text-sm font-semibold tracking-tight text-foreground">{t('app.title')}</h1>
+      <div className="min-w-0">
+        <h1 className="truncate text-sm font-semibold tracking-tight text-foreground">Codex</h1>
+        <div className="truncate text-[11px] text-muted-foreground">
+          {projectsCount} project{projectsCount === 1 ? '' : 's'} synced
+        </div>
+      </div>
     </div>
   );
 
@@ -88,11 +93,11 @@ export default function SidebarHeader({
             <Button
               variant="ghost"
               size="sm"
-              className={`h-7 w-7 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground ${IS_CODEX_ONLY_HARDENED ? 'hidden' : ''}`}
+              className="h-7 w-7 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
               onClick={onCreateProject}
-              title={t('tooltips.createProject')}
+              title={IS_CODEX_ONLY_HARDENED ? 'Add project' : t('tooltips.createProject')}
             >
-              <Plus className="h-3.5 w-3.5" />
+              <FolderPlus className="h-3.5 w-3.5" />
             </Button>
             <Button
               variant="ghost"
@@ -190,14 +195,13 @@ export default function SidebarHeader({
             >
               <RefreshCw className={`h-4 w-4 text-muted-foreground ${isRefreshing ? 'animate-spin' : ''}`} />
             </button>
-            {!IS_CODEX_ONLY_HARDENED && (
-              <button
-                className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/90 text-primary-foreground transition-all active:scale-95"
-                onClick={onCreateProject}
-              >
-                <FolderPlus className="h-4 w-4" />
-              </button>
-            )}
+            <button
+              className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/90 text-primary-foreground transition-all active:scale-95"
+              onClick={onCreateProject}
+              title={IS_CODEX_ONLY_HARDENED ? 'Add project' : t('tooltips.createProject')}
+            >
+              <FolderPlus className="h-4 w-4" />
+            </button>
           </div>
         </div>
 

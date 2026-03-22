@@ -27,8 +27,8 @@ $tailscalePath = if ($env:MOBILE_CODEX_TAILSCALE) {
   Workspace = $workspace
   UpstreamExists = (Test-Path $upstream)
   UpstreamPath = $upstream
-  Node = if ($nodeCommand) { $nodeCommand.Path } else { $null }
-  Nginx = if ($nginxCommand) { $nginxCommand.Path } else { $null }
+  Node = if ($nodeCommand) { if ($nodeCommand.Path) { $nodeCommand.Path } else { $nodeCommand.FullName } } else { $null }
+  Nginx = if ($nginxCommand) { if ($nginxCommand.Path) { $nginxCommand.Path } else { $nginxCommand.FullName } } else { $null }
   Tailscale = if (Test-Path $tailscalePath) { $tailscalePath } else { $null }
   Python = (Get-Command python -ErrorAction SilentlyContinue).Path
 } | Format-List

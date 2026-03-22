@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Edit3, Folder, FolderOpen, Star, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Edit3, Folder, FolderOpen, Plus, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 import { Button } from '../../../../shared/view/ui';
 import { cn } from '../../../../lib/utils';
@@ -100,6 +100,10 @@ export default function SidebarProjectItem({
   const sessionCountDisplay = getSessionCountDisplay(sessions, hasMoreSessions);
   const sessionCountLabel = `${sessionCountDisplay} session${sessions.length === 1 ? '' : 's'}`;
   const taskStatus = getTaskIndicatorStatus(project, mcpServerStatus);
+  const projectPathHint =
+    project.fullPath && project.fullPath.length > 42
+      ? `...${project.fullPath.slice(-39)}`
+      : project.fullPath;
 
   const toggleProject = () => onToggleProject(project.name);
   const toggleStarProject = () => onToggleStarProject(project.name);
@@ -122,26 +126,27 @@ export default function SidebarProjectItem({
         <div className="md:hidden">
           <div
             className={cn(
-              'p-3 mx-3 my-1 rounded-lg bg-card border border-border/50 active:scale-[0.98] transition-all duration-150',
-              isSelected && 'bg-primary/5 border-primary/20',
+              'mx-3 my-1 rounded-2xl border px-3 py-3 active:scale-[0.98] transition-all duration-150',
+              isSelected && 'border-primary/30 bg-primary/8 shadow-sm',
+              !isSelected && 'border-border/50 bg-card/90',
               isStarred &&
                 !isSelected &&
-                'bg-yellow-50/50 dark:bg-yellow-900/5 border-yellow-200/30 dark:border-yellow-800/30',
+                'border-yellow-200/40 bg-yellow-50/50 dark:border-yellow-800/30 dark:bg-yellow-900/5',
             )}
             onClick={toggleProject}
           >
-            <div className="flex items-center justify-between">
-              <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 flex-1 items-start gap-3">
                 <div
                   className={cn(
-                    'w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
-                    isExpanded ? 'bg-primary/10' : 'bg-muted',
+                    'mt-0.5 flex h-9 w-9 items-center justify-center rounded-xl transition-colors',
+                    isExpanded ? 'bg-primary/12 text-primary' : 'bg-muted text-muted-foreground',
                   )}
                 >
                   {isExpanded ? (
-                    <FolderOpen className="h-4 w-4 text-primary" />
+                    <FolderOpen className="h-4 w-4" />
                   ) : (
-                    <Folder className="h-4 w-4 text-muted-foreground" />
+                    <Folder className="h-4 w-4" />
                   )}
                 </div>
 
@@ -173,8 +178,16 @@ export default function SidebarProjectItem({
                     />
                   ) : (
                     <>
-                      <div className="flex min-w-0 flex-1 items-center justify-between">
-                        <h3 className="truncate text-sm font-medium text-foreground">{project.displayName}</h3>
+                      <div className="mb-1 flex min-w-0 items-center gap-2">
+                        <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-primary">
+                          Project
+                        </span>
+                        <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {sessionCountLabel}
+                        </span>
+                      </div>
+                      <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
+                        <h3 className="truncate text-sm font-semibold text-foreground">{project.displayName}</h3>
                         {tasksEnabled && (
                           <TaskIndicator
                             status={taskStatus}
@@ -183,7 +196,7 @@ export default function SidebarProjectItem({
                           />
                         )}
                       </div>
-                      <p className="text-xs text-muted-foreground">{sessionCountLabel}</p>
+                      <p className="truncate text-xs text-muted-foreground">{projectPathHint}</p>
                     </>
                   )}
                 </div>
@@ -213,6 +226,17 @@ export default function SidebarProjectItem({
                   </>
                 ) : (
                   <>
+                    <button
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 active:scale-90 dark:border-primary/30 dark:bg-primary/20"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onProjectSelect(project);
+                        onNewSession(project);
+                      }}
+                      title={t('sessions.newSession')}
+                    >
+                      <Plus className="h-4 w-4 text-primary" />
+                    </button>
                     <button
                       className={cn(
                         'w-8 h-8 rounded-lg flex items-center justify-center active:scale-90 transition-all duration-150 border',
@@ -277,8 +301,8 @@ export default function SidebarProjectItem({
         <Button
           variant="ghost"
           className={cn(
-            'hidden md:flex w-full justify-between p-2 h-auto font-normal hover:bg-accent/50',
-            isSelected && 'bg-accent text-accent-foreground',
+            'hidden h-auto w-full justify-between rounded-2xl border border-transparent p-3 font-normal transition-colors hover:bg-accent/50 md:flex',
+            isSelected && 'border-primary/15 bg-accent text-accent-foreground',
             isStarred &&
               !isSelected &&
               'bg-yellow-50/50 dark:bg-yellow-900/10 hover:bg-yellow-100/50 dark:hover:bg-yellow-900/20',
@@ -315,18 +339,20 @@ export default function SidebarProjectItem({
                   </div>
                 </div>
               ) : (
-                <div>
+                <div className="space-y-1">
+                  <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Project
+                  </div>
                   <div className="truncate text-sm font-semibold text-foreground" title={project.displayName}>
                     {project.displayName}
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    {sessionCountDisplay}
-                    {project.fullPath !== project.displayName && (
-                      <span className="ml-1 opacity-60" title={project.fullPath}>
-                        {' - '}
-                        {project.fullPath.length > 25 ? `...${project.fullPath.slice(-22)}` : project.fullPath}
-                      </span>
-                    )}
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      {sessionCountLabel}
+                    </span>
+                    <span className="truncate opacity-70" title={project.fullPath}>
+                      {projectPathHint}
+                    </span>
                   </div>
                 </div>
               )}
@@ -357,6 +383,17 @@ export default function SidebarProjectItem({
               </>
             ) : (
               <>
+                <button
+                  type="button"
+                  className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded bg-primary/10 text-primary opacity-100 transition-all duration-200 hover:bg-primary/15"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onNewSession(project);
+                  }}
+                  title={t('sessions.newSession')}
+                >
+                  <Plus className="h-3 w-3" />
+                </button>
                 <div
                   className={cn(
                     'w-6 h-6 opacity-0 group-hover:opacity-100 transition-all duration-200 flex items-center justify-center rounded cursor-pointer touch:opacity-100',

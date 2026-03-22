@@ -161,15 +161,15 @@ export default function ProviderSelectionEmptyState({
               <SessionProviderLogo provider="codex" className="h-8 w-8" />
             </div>
             <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
-              {t("providerSelection.title")}
+              New Codex Session
             </h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              {t("providerSelection.readyPrompt.codex", { model: codexModel })}
+              Start a session in this project. Pick a model, then send your first prompt.
             </p>
 
             <div className="mt-5 flex items-center justify-center gap-2">
               <span className="text-sm text-muted-foreground">
-                {t("providerSelection.selectModel")}
+                Model
               </span>
               <div className="relative">
                 <select

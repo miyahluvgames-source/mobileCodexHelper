@@ -54,11 +54,11 @@ export const getSessionDate = (session: SessionWithProvider): Date => {
 
 export const getSessionName = (session: SessionWithProvider, t: TFunction): string => {
   if (session.__provider === 'cursor') {
-    return session.summary || session.name || t('projects.untitledSession');
+    return session.name || session.summary || t('projects.untitledSession');
   }
 
   if (session.__provider === 'codex') {
-    return session.summary || session.name || t('projects.codexSession');
+    return session.name || session.summary || t('projects.codexSession');
   }
 
   if (session.__provider === 'gemini') {

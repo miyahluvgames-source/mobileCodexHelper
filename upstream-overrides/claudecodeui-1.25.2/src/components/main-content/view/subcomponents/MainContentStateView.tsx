@@ -8,6 +8,17 @@ export default function MainContentStateView({ mode, isMobile, onMenuClick, topW
   const { t } = useTranslation();
 
   const isLoading = mode === 'loading';
+  const loadingTitle = IS_CODEX_ONLY_HARDENED ? 'Loading Codex' : t('mainContent.loading');
+  const loadingDescription = IS_CODEX_ONLY_HARDENED ? 'Syncing projects and recent sessions.' : t('mainContent.settingUpWorkspace');
+  const emptyTitle = IS_CODEX_ONLY_HARDENED ? 'Open a Project' : t('mainContent.chooseProject');
+  const emptyDescription = IS_CODEX_ONLY_HARDENED
+    ? 'Choose a synced project from the sidebar to continue. Projects keep their sessions, files, and context together.'
+    : t('mainContent.selectProjectDescription');
+  const emptyTip = IS_CODEX_ONLY_HARDENED
+    ? 'Pick a project to review recent sessions or start a new Codex session.'
+    : isMobile
+      ? t('mainContent.createProjectMobile')
+      : t('mainContent.createProjectDesktop');
 
   return (
     <div className="flex h-full flex-col">
@@ -38,8 +49,8 @@ export default function MainContentStateView({ mode, isMobile, onMenuClick, topW
                 }}
               />
             </div>
-            <h2 className="mb-1 text-lg font-semibold text-foreground">{t('mainContent.loading')}</h2>
-            <p className="text-sm">{t('mainContent.settingUpWorkspace')}</p>
+            <h2 className="mb-1 text-lg font-semibold text-foreground">{loadingTitle}</h2>
+            <p className="text-sm">{loadingDescription}</p>
           </div>
         </div>
       ) : (
@@ -48,16 +59,12 @@ export default function MainContentStateView({ mode, isMobile, onMenuClick, topW
             <div className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted/50">
               <Folder className="h-7 w-7 text-muted-foreground" />
             </div>
-            <h2 className="mb-2 text-xl font-semibold text-foreground">{t('mainContent.chooseProject')}</h2>
-            <p className="mb-5 text-sm leading-relaxed text-muted-foreground">{t('mainContent.selectProjectDescription')}</p>
+            <h2 className="mb-2 text-xl font-semibold text-foreground">{emptyTitle}</h2>
+            <p className="mb-5 text-sm leading-relaxed text-muted-foreground">{emptyDescription}</p>
             <div className="rounded-xl border border-primary/10 bg-primary/5 p-3.5">
               <p className="text-sm text-primary">
                 <strong>{t('mainContent.tip')}:</strong>{' '}
-                {IS_CODEX_ONLY_HARDENED
-                  ? 'Select one of your existing Codex projects from the sidebar to continue.'
-                  : isMobile
-                    ? t('mainContent.createProjectMobile')
-                    : t('mainContent.createProjectDesktop')}
+                {emptyTip}
               </p>
             </div>
           </div>

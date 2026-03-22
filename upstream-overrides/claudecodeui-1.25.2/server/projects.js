@@ -458,11 +458,12 @@ async function generateDisplayName(projectName, actualProjectDir = null) {
     // Fall back to path-based naming if package.json doesn't exist or can't be read
   }
 
-  // If it starts with /, it's an absolute path
-  if (projectPath.startsWith('/')) {
-    const parts = projectPath.split('/').filter(Boolean);
-    // Return only the last folder name
-    return parts[parts.length - 1] || projectPath;
+  const normalizedProjectPath = path.normalize(projectPath);
+  const projectBasename = path.basename(normalizedProjectPath);
+  const projectRoot = path.parse(normalizedProjectPath).root;
+
+  if (projectBasename && projectBasename !== projectRoot) {
+    return projectBasename;
   }
 
   return projectPath;
@@ -1640,6 +1641,7 @@ async function findCodexJsonlFiles(dir) {
 async function buildCodexSessionsIndex() {
   const codexSessionsDir = path.join(os.homedir(), '.codex', 'sessions');
   const sessionsByProject = new Map();
+  const titleBySessionId = await loadCodexSessionTitleLookup();
 
   try {
     await fs.access(codexSessionsDir);
@@ -1661,15 +1663,22 @@ async function buildCodexSessionsIndex() {
         continue;
       }
 
+      if (sessionData.isArchived) {
+        continue;
+      }
+
+      const sessionTitle = titleBySessionId.get(sessionData.id) || sessionData.summary || 'Codex Session';
       const session = {
         id: sessionData.id,
-        summary: sessionData.summary || 'Codex Session',
+        name: sessionTitle,
+        summary: sessionTitle,
         messageCount: sessionData.messageCount || 0,
         lastActivity: sessionData.timestamp ? new Date(sessionData.timestamp) : new Date(),
         cwd: resolveProjectPath(sessionData.cwd) || sessionData.cwd,
         model: sessionData.model,
         filePath,
         provider: 'codex',
+        isArchived: false,
       };
 
       if (!sessionsByProject.has(normalizedProjectPath)) {
@@ -1687,6 +1696,54 @@ async function buildCodexSessionsIndex() {
   }
 
   return sessionsByProject;
+}
+
+async function loadCodexSessionTitleLookup() {
+  const sessionIndexPath = path.join(os.homedir(), '.codex', 'session_index.jsonl');
+  const titlesBySessionId = new Map();
+
+  try {
+    await fs.access(sessionIndexPath);
+  } catch (error) {
+    return titlesBySessionId;
+  }
+
+  const fileStream = fsSync.createReadStream(sessionIndexPath);
+  const rl = readline.createInterface({
+    input: fileStream,
+    crlfDelay: Infinity
+  });
+
+  for await (const line of rl) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    try {
+      const entry = JSON.parse(line);
+      const sessionId = typeof entry.id === 'string' ? entry.id.trim() : '';
+      const threadName = typeof entry.thread_name === 'string' ? entry.thread_name.trim() : '';
+      const updatedAt = entry.updated_at ? new Date(entry.updated_at).getTime() : 0;
+
+      if (!sessionId || !threadName) {
+        continue;
+      }
+
+      const current = titlesBySessionId.get(sessionId);
+      if (!current || updatedAt >= current.updatedAt) {
+        titlesBySessionId.set(sessionId, {
+          title: threadName,
+          updatedAt
+        });
+      }
+    } catch (error) {
+      // Skip malformed index rows.
+    }
+  }
+
+  return new Map(
+    Array.from(titlesBySessionId.entries()).map(([sessionId, value]) => [sessionId, value.title])
+  );
 }
 
 // Fetch Codex sessions for a given project path
@@ -1727,8 +1784,30 @@ function isVisibleCodexUserMessage(payload) {
   if (typeof payload.message !== 'string' || payload.message.trim().length === 0) {
     return false;
   }
-  
+
   return true;
+}
+
+function hasCodexArchiveDirective(payload) {
+  if (!payload || payload.type !== 'message' || payload.role !== 'assistant') {
+    return false;
+  }
+
+  const contentParts = Array.isArray(payload.content) ? payload.content : [];
+  return contentParts.some((part) => {
+    if (!part || typeof part !== 'object') {
+      return false;
+    }
+
+    const text =
+      typeof part.text === 'string'
+        ? part.text
+        : typeof part.input === 'string'
+          ? part.input
+          : null;
+
+    return typeof text === 'string' && /::archive(?:-thread)?\{/.test(text);
+  });
 }
 
 // Parse a Codex session JSONL file to extract metadata
@@ -1744,6 +1823,7 @@ async function parseCodexSessionFile(filePath) {
     let lastTimestamp = null;
     let lastUserMessage = null;
     let messageCount = 0;
+    let isArchived = false;
 
     for await (const line of rl) {
       if (line.trim()) {
@@ -1778,6 +1858,10 @@ async function parseCodexSessionFile(filePath) {
             messageCount++;
           }
 
+          if (!isArchived && entry.type === 'response_item' && hasCodexArchiveDirective(entry.payload)) {
+            isArchived = true;
+          }
+
         } catch (parseError) {
           // Skip malformed lines
         }
@@ -1791,7 +1875,8 @@ async function parseCodexSessionFile(filePath) {
         summary: lastUserMessage ?
           (lastUserMessage.length > 50 ? lastUserMessage.substring(0, 50) + '...' : lastUserMessage) :
           'Codex Session',
-        messageCount
+        messageCount,
+        isArchived
       };
     }
 
@@ -2421,25 +2506,10 @@ async function searchCodexSessionsForProject(
     if (getTotalMatches() >= limit || isAborted()) break;
 
     try {
-      const fileStream = fsSync.createReadStream(filePath);
-      const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
+      const parsedSession = await parseCodexSessionFile(filePath);
+      if (!parsedSession || parsedSession.isArchived) continue;
 
-      // First pass: read session_meta to check project path match
-      let sessionMeta = null;
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        try {
-          const entry = JSON.parse(line);
-          if (entry.type === 'session_meta' && entry.payload) {
-            sessionMeta = entry.payload;
-            break;
-          }
-        } catch { continue; }
-      }
-
-      // Skip sessions that don't belong to this project
-      if (!sessionMeta) continue;
-      const sessionProjectPath = normalizeComparablePath(sessionMeta.cwd);
+      const sessionProjectPath = normalizeComparablePath(parsedSession.cwd);
       if (sessionProjectPath !== normalizedProjectPath) continue;
 
       // Second pass: re-read file to find matching messages
@@ -2493,7 +2563,7 @@ async function searchCodexSessionsForProject(
 
       if (matches.length > 0) {
         projectResult.sessions.push({
-          sessionId: sessionMeta.id,
+          sessionId: parsedSession.id,
           provider: 'codex',
           sessionSummary: lastUserMessage
             ? (lastUserMessage.length > 50 ? lastUserMessage.substring(0, 50) + '...' : lastUserMessage)

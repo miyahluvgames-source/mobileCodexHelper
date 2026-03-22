@@ -1,3 +1,4 @@
+import { IS_CODEX_ONLY_HARDENED } from '../../../constants/config';
 import { api } from '../../../utils/api';
 import type {
   BrowseFilesystemResponse,
@@ -65,7 +66,13 @@ export const createFolderInFilesystem = async (folderPath: string) => {
 };
 
 export const createWorkspaceRequest = async (payload: CreateWorkspacePayload) => {
-  const response = await api.createWorkspace(payload);
+  const response = IS_CODEX_ONLY_HARDENED
+    ? payload.workspaceType === 'existing'
+      ? await api.createProject(payload.path)
+      : (() => {
+          throw new Error('Codex mode only supports adding existing local projects');
+        })()
+    : await api.createWorkspace(payload);
   const data = await parseJson<CreateWorkspaceResponse>(response);
 
   if (!response.ok) {

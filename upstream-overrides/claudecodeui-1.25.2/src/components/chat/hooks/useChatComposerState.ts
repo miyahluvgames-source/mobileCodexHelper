@@ -10,7 +10,7 @@ import type {
   TouchEvent,
 } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { authenticatedFetch } from '../../../utils/api';
+import { api, authenticatedFetch } from '../../../utils/api';
 import { IS_CODEX_ONLY_HARDENED } from '../../../constants/config';
 import { thinkingModes } from '../constants/thinkingModes';
 import { grantClaudeToolPermission } from '../utils/chatPermissions';
@@ -67,6 +67,14 @@ interface MentionableFile {
   path: string;
 }
 
+interface UploadedProjectFile {
+  name?: string;
+  path?: string;
+  relativePath?: string;
+  size?: number;
+  mimeType?: string;
+}
+
 interface CommandExecutionResult {
   type: 'builtin' | 'custom';
   action?: string;
@@ -121,6 +129,7 @@ export function useChatComposerState({
     return '';
   });
   const [attachedImages, setAttachedImages] = useState<File[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
   const [uploadingImages, setUploadingImages] = useState<Map<string, number>>(new Map());
   const [imageErrors, setImageErrors] = useState<Map<string, string>>(new Map());
   const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
@@ -128,6 +137,7 @@ export function useChatComposerState({
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputHighlightRef = useRef<HTMLDivElement>(null);
+  const filePickerRef = useRef<HTMLInputElement>(null);
   const handleSubmitRef = useRef<
     ((event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>) => Promise<void>) | null
   >(null);
@@ -437,6 +447,88 @@ export function useChatComposerState({
     }
   }, []);
 
+  const handleProjectFiles = useCallback((files: File[]) => {
+    const validFiles = files.filter((file) => {
+      if (!file || typeof file !== 'object') {
+        return false;
+      }
+
+      return Boolean(file.name) && Number(file.size || 0) <= 50 * 1024 * 1024;
+    });
+
+    if (validFiles.length === 0) {
+      return;
+    }
+
+    setAttachedFiles((previous) => {
+      const next = [...previous];
+      const seen = new Set(previous.map((file) => `${file.name}:${file.size}:${file.lastModified}`));
+
+      for (const file of validFiles) {
+        const fileKey = `${file.name}:${file.size}:${file.lastModified}`;
+        if (seen.has(fileKey)) {
+          continue;
+        }
+
+        seen.add(fileKey);
+        next.push(file);
+
+        if (next.length >= 20) {
+          break;
+        }
+      }
+
+      return next;
+    });
+  }, []);
+
+  const handleDroppedFiles = useCallback((files: File[]) => {
+    if (files.length === 0) {
+      return;
+    }
+
+    const imageFiles = files.filter((file) => file.type?.startsWith('image/'));
+    const nonImageFiles = files.filter((file) => !file.type?.startsWith('image/'));
+
+    if (!IS_CODEX_ONLY_HARDENED && imageFiles.length > 0) {
+      handleImageFiles(imageFiles);
+    }
+
+    const projectFiles = IS_CODEX_ONLY_HARDENED ? files : nonImageFiles;
+    if (projectFiles.length > 0) {
+      handleProjectFiles(projectFiles);
+    }
+  }, [handleImageFiles, handleProjectFiles]);
+
+  const handleFilePickerChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(event.target.files || []);
+      if (files.length > 0) {
+        handleProjectFiles(files);
+      }
+
+      event.target.value = '';
+    },
+    [handleProjectFiles],
+  );
+
+  const openFilePicker = useCallback(() => {
+    filePickerRef.current?.click();
+  }, []);
+
+  const formatUploadedFilePrompt = useCallback((files: UploadedProjectFile[]) => {
+    const relativePaths = files
+      .map((file) => (file.relativePath || file.name || '').replace(/\\/g, '/'))
+      .filter(Boolean);
+
+    if (relativePaths.length === 0) {
+      return '';
+    }
+
+    const fileList = relativePaths.map((filePath) => `- ${filePath}`).join('\n');
+    return `Uploaded files:\n${fileList}`;
+  }, []);
+
   const handlePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
       const items = Array.from(event.clipboardData.items);
@@ -462,13 +554,10 @@ export function useChatComposerState({
     [handleImageFiles],
   );
 
-  const { getRootProps, getInputProps, isDragActive, open } = useDropzone({
-    accept: {
-      'image/*': ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'],
-    },
-    maxSize: 5 * 1024 * 1024,
-    maxFiles: 5,
-    onDrop: handleImageFiles,
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+    maxSize: 50 * 1024 * 1024,
+    maxFiles: 20,
+    onDrop: handleDroppedFiles,
     noClick: true,
     noKeyboard: true,
   });
@@ -479,7 +568,9 @@ export function useChatComposerState({
     ) => {
       event.preventDefault();
       const currentInput = inputValueRef.current;
-      if (!currentInput.trim() || isLoading || !selectedProject) {
+      const hasPendingAttachments = attachedFiles.length > 0;
+
+      if ((!currentInput.trim() && !hasPendingAttachments) || isLoading || !selectedProject) {
         return;
       }
 
@@ -505,9 +596,9 @@ export function useChatComposerState({
         }
       }
 
-      let messageContent = currentInput;
+      let messageContent = currentInput.trim();
       const selectedThinkingMode = thinkingModes.find((mode: { id: string; prefix?: string }) => mode.id === thinkingMode);
-      if (selectedThinkingMode && selectedThinkingMode.prefix) {
+      if (messageContent && selectedThinkingMode && selectedThinkingMode.prefix) {
         messageContent = `${selectedThinkingMode.prefix}: ${currentInput}`;
       }
 
@@ -546,9 +637,46 @@ export function useChatComposerState({
         }
       }
 
+      let uploadedFiles: UploadedProjectFile[] = [];
+      if (attachedFiles.length > 0) {
+        const formData = new FormData();
+        attachedFiles.forEach((file) => {
+          formData.append('files', file, file.name);
+        });
+
+        try {
+          const response = await api.uploadFiles(selectedProject.name, formData);
+          if (!response.ok) {
+            throw new Error('Failed to upload files');
+          }
+
+          const result = await response.json();
+          uploadedFiles = Array.isArray(result.files) ? result.files : [];
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          console.error('File upload failed:', error);
+          setChatMessages((previous) => [
+            ...previous,
+            {
+              type: 'error',
+              content: `Failed to upload files: ${message}`,
+              timestamp: new Date(),
+            },
+          ]);
+          return;
+        }
+      }
+
+      const uploadedFilePrompt = formatUploadedFilePrompt(uploadedFiles);
+      if (uploadedFilePrompt) {
+        messageContent = messageContent
+          ? `${messageContent}\n\n${uploadedFilePrompt}`
+          : `Please inspect these uploaded files:\n${uploadedFilePrompt.replace(/^Uploaded files:\n/, '')}`;
+      }
+
       const userMessage: ChatMessage = {
         type: 'user',
-        content: currentInput,
+        content: messageContent,
         images: uploadedImages as any,
         timestamp: new Date(),
       };
@@ -674,6 +802,7 @@ export function useChatComposerState({
       inputValueRef.current = '';
       resetCommandMenuState();
       setAttachedImages([]);
+      setAttachedFiles([]);
       setUploadingImages(new Map());
       setImageErrors(new Map());
       setIsTextareaExpanded(false);
@@ -686,12 +815,14 @@ export function useChatComposerState({
       safeLocalStorage.removeItem(`draft_input_${selectedProject.name}`);
     },
     [
+      attachedFiles,
       attachedImages,
       claudeModel,
       codexModel,
       currentSessionId,
       cursorModel,
       executeCommand,
+      formatUploadedFilePrompt,
       geminiModel,
       isLoading,
       onSessionActive,
@@ -997,12 +1128,16 @@ export function useChatComposerState({
     selectFile,
     attachedImages,
     setAttachedImages,
+    attachedFiles,
+    setAttachedFiles,
     uploadingImages,
     imageErrors,
     getRootProps,
     getInputProps,
     isDragActive,
-    openImagePicker: open,
+    openFilePicker,
+    filePickerRef,
+    handleFilePickerChange,
     handleSubmit,
     handleInputChange,
     handleKeyDown,

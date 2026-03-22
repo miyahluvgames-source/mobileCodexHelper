@@ -54,7 +54,7 @@
 ```text
 手机浏览器
    ↓
-Tailscale 私网 HTTPS
+Tailscale 私网 HTTP（tailnet 内部）
    ↓
 本机 nginx 代理
    ↓
@@ -62,6 +62,12 @@ Tailscale 私网 HTTPS
    ↓
 电脑上的 Codex 会话
 ```
+
+说明：
+
+- 当前仓库里已经实际验证通过的是 tailnet 内部 `HTTP` 访问，不是 `HTTPS`
+- 如果浏览器或代理自动把地址升级成 `https://...`，访问可能会失败
+- 更详细的远程访问说明见：`docs/REMOTE_ACCESS.zh-CN.md`
 
 ## 你需要准备什么
 
@@ -119,6 +125,7 @@ Tailscale 私网 HTTPS
 7. 在桌面工具里点击“开启手机访问”
 8. 让手机和电脑登录同一个 Tailscale 网络
 9. 用手机打开桌面工具里显示的“手机访问地址”
+   优先使用 `http://<hostname>`
 10. 首次登录新设备时，在电脑端批准这台设备
 
 做到这里，你通常已经可以从手机继续控制电脑上的 Codex 了。
@@ -204,6 +211,19 @@ powershell -ExecutionPolicy Bypass -File scripts/check-mobile-codex-runtime.ps1
 - 先用手机浏览器打通全流程
 - 再测试封装 App
 - 确认壳支持 `localStorage`、Cookie、`Authorization` 请求头和 WebSocket
+
+### 4. Mac / iPhone / iPad 输入地址后显示网页异常
+
+优先检查这几件事：
+
+- 地址是不是 `http://<hostname>`，而不是 `https://<hostname>`
+- 设备是否登录了同一个 Tailscale tailnet
+- 代理软件是否接管了 `*.ts.net` 或 tailnet 流量
+
+更完整的远程访问说明见：
+
+- 中文：`docs/REMOTE_ACCESS.zh-CN.md`
+- English: `docs/REMOTE_ACCESS.md`
 
 ## 常用命令
 

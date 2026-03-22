@@ -375,11 +375,24 @@ def get_listener_map(ports: list[int] | None = None) -> dict[int, ListenerInfo]:
     ports_literal = ",".join(str(port) for port in target_ports)
     command = f"""
 $ports = @({ports_literal})
-$listeners = foreach ($item in Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object {{ $ports -contains $_.LocalPort }}) {{
-    $proc = Get-Process -Id $item.OwningProcess -ErrorAction SilentlyContinue
+$listeners = foreach ($line in (netstat -ano -p tcp | Select-String 'LISTENING')) {{
+    $parts = ($line.ToString() -replace '^\\s+', '') -split '\\s+'
+    if ($parts.Length -lt 5) {{
+        continue
+    }}
+    $localAddress = $parts[1]
+    if ($localAddress -notmatch ':(\\d+)$') {{
+        continue
+    }}
+    $port = [int]$matches[1]
+    if ($ports -notcontains $port) {{
+        continue
+    }}
+    $pid = [int]$parts[-1]
+    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
     [PSCustomObject]@{{
-        port = [int]$item.LocalPort
-        pid = [int]$item.OwningProcess
+        port = $port
+        pid = $pid
         name = if ($proc) {{ $proc.ProcessName }} else {{ '' }}
         path = if ($proc -and $proc.Path) {{ $proc.Path }} else {{ '' }}
     }}
@@ -427,6 +440,8 @@ def normalize_remote_health_detail(detail: str) -> str:
     lowered = detail.lower()
     if "handshake operation timed out" in lowered or "timed out" in lowered:
         return "本机自检超时，手机端可能仍可访问"
+    if "502" in detail or "bad gateway" in lowered:
+        return "本机回环验证失败，手机端可能仍可访问"
     if "10061" in detail:
         return "远程入口未监听"
     return f"本机自检失败：{detail}"
@@ -491,11 +506,18 @@ def build_remote_status(tailscale_status: dict[str, Any], serve_status: dict[str
         }
 
     host_and_port, config = web_entries[0]
-    host = str(host_and_port).replace(":443", "")
+    host_with_port = str(host_and_port)
+    scheme = "https"
+    host = host_with_port
+    if host_with_port.endswith(":80"):
+        scheme = "http"
+        host = host_with_port[:-3]
+    elif host_with_port.endswith(":443"):
+        host = host_with_port[:-4]
     target = (((config or {}).get("Handlers") or {}).get("/") or {}).get("Proxy")
     tailscale_data = tailscale_status.get("data") if tailscale_status.get("ok") else {}
     fallback_dns = normalize_dns_name((((tailscale_data or {}).get("Self") or {}).get("DNSName")))
-    url = f"https://{host or fallback_dns}" if (host or fallback_dns) else None
+    url = f"{scheme}://{host or fallback_dns}" if (host or fallback_dns) else None
     health_ok = False
     health_detail = "未执行远程健康检查"
     if url:
@@ -919,7 +941,7 @@ def perform_action(action: str) -> str:
         return "整套服务已停止"
 
     if action == "enable_remote":
-        result = run_command([str(TAILSCALE), "serve", "--bg", REMOTE_TARGET], timeout=20)
+        result = run_command([str(TAILSCALE), "serve", "--http=80", "--bg", REMOTE_TARGET], timeout=20)
         if result.returncode != 0:
             raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "开启远程发布失败")
         if not wait_for(remote_publish_is_enabled, timeout=12, interval=1.0):

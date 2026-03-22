@@ -202,7 +202,9 @@ powershell -ExecutionPolicy Bypass -File scripts/enable-mobile-codex-remote.ps1
 After that:
 
 - confirm remote publish state in the desktop control tool
-- open the private HTTPS address shown by Tailscale on the phone
+- open the private address shown by Tailscale on the phone
+- the currently validated default entry is `http://<hostname>`
+- do not assume `https://<hostname>` will work
 
 ## Step 10: First-time device approval
 
@@ -269,6 +271,19 @@ Check:
 - `tmp/logs/mobile-codex-app.stdout.log`
 - `tmp/logs/mobile-codex-app.stderr.log`
 - nginx logs
+
+### Mac / iPhone / iPad says the page is not working correctly
+
+Check these first:
+
+- are you opening `http://<hostname>` instead of `https://<hostname>`?
+- is the device logged into the same Tailscale tailnet?
+- is a local proxy intercepting `*.ts.net` or tailnet traffic?
+
+For the detailed guide, see:
+
+- Chinese: `docs/REMOTE_ACCESS.zh-CN.md`
+- English: `docs/REMOTE_ACCESS.md`
 
 ## Post-deployment self-check
 

@@ -1,4 +1,5 @@
 import { useTranslation } from 'react-i18next';
+import { X } from 'lucide-react';
 import { IS_CODEX_ONLY_HARDENED } from '../../../../constants/config';
 import type {
   ChangeEvent,
@@ -62,6 +63,8 @@ interface ChatComposerProps {
   isDragActive: boolean;
   attachedImages: File[];
   onRemoveImage: (index: number) => void;
+  attachedFiles: File[];
+  onRemoveFile: (index: number) => void;
   uploadingImages: Map<string, number>;
   imageErrors: Map<string, string>;
   showFileDropdown: boolean;
@@ -76,7 +79,9 @@ interface ChatComposerProps {
   frequentCommands: SlashCommand[];
   getRootProps: (...args: unknown[]) => Record<string, unknown>;
   getInputProps: (...args: unknown[]) => Record<string, unknown>;
-  openImagePicker: () => void;
+  openFilePicker: () => void;
+  filePickerRef: RefObject<HTMLInputElement>;
+  onFilePickerChange: (event: ChangeEvent<HTMLInputElement>) => void;
   inputHighlightRef: RefObject<HTMLDivElement>;
   renderInputWithMentions: (text: string) => ReactNode;
   textareaRef: RefObject<HTMLTextAreaElement>;
@@ -91,9 +96,22 @@ interface ChatComposerProps {
   isInputFocused?: boolean;
   placeholder: string;
   isTextareaExpanded: boolean;
+  canSubmit: boolean;
   sendByCtrlEnter?: boolean;
   onTranscript: (text: string) => void;
 }
+
+const formatFileSize = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '0 B';
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
 
 export default function ChatComposer({
   pendingPermissionRequests,
@@ -119,6 +137,8 @@ export default function ChatComposer({
   isDragActive,
   attachedImages,
   onRemoveImage,
+  attachedFiles,
+  onRemoveFile,
   uploadingImages,
   imageErrors,
   showFileDropdown,
@@ -133,7 +153,9 @@ export default function ChatComposer({
   frequentCommands,
   getRootProps,
   getInputProps,
-  openImagePicker,
+  openFilePicker,
+  filePickerRef,
+  onFilePickerChange,
   inputHighlightRef,
   renderInputWithMentions,
   textareaRef,
@@ -148,6 +170,7 @@ export default function ChatComposer({
   isInputFocused,
   placeholder,
   isTextareaExpanded,
+  canSubmit,
   sendByCtrlEnter,
   onTranscript,
 }: ChatComposerProps) {
@@ -218,14 +241,43 @@ export default function ChatComposer({
                   d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
                 />
               </svg>
-              <p className="text-sm font-medium">Drop images here</p>
+              <p className="text-sm font-medium">Drop files here</p>
             </div>
           </div>
         )}
 
-        {attachedImages.length > 0 && (
+        {(attachedFiles.length > 0 || attachedImages.length > 0) && (
           <div className="mb-2 rounded-xl bg-muted/40 p-2">
             <div className="flex flex-wrap gap-2">
+              {attachedFiles.map((file, index) => (
+                <div
+                  key={`${file.name}-${file.lastModified}-${index}`}
+                  className="flex items-center gap-2 rounded-xl border border-border/50 bg-background/80 px-3 py-2"
+                >
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828L18 9.828a4 4 0 10-5.656-5.656L5.757 10.757a6 6 0 108.486 8.486L20.5 13"
+                      />
+                    </svg>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-foreground">{file.name}</div>
+                    <div className="text-xs text-muted-foreground">{formatFileSize(file.size)}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRemoveFile(index)}
+                    className="rounded-lg p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    aria-label={`Remove ${file.name}`}
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
               {attachedImages.map((file, index) => (
                 <ImageAttachment
                   key={index}
@@ -283,6 +335,13 @@ export default function ChatComposer({
           }`}
         >
           <input {...getInputProps()} />
+          <input
+            ref={filePickerRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={onFilePickerChange}
+          />
           <div ref={inputHighlightRef} aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-2xl">
             <div className="chat-input-placeholder block w-full whitespace-pre-wrap break-words py-1.5 pl-12 pr-20 text-base leading-6 text-transparent sm:py-4 sm:pr-40">
               {renderInputWithMentions(input)}
@@ -306,23 +365,21 @@ export default function ChatComposer({
               style={{ height: '50px' }}
             />
 
-            {!IS_CODEX_ONLY_HARDENED && (
-              <button
-                type="button"
-                onClick={openImagePicker}
-                className="absolute left-2 top-1/2 -translate-y-1/2 transform rounded-xl p-2 transition-colors hover:bg-accent/60"
-                title={t('input.attachImages')}
-              >
-                <svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-                  />
-                </svg>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={openFilePicker}
+              className="absolute left-2 top-1/2 -translate-y-1/2 transform rounded-xl p-2 transition-colors hover:bg-accent/60"
+              title={IS_CODEX_ONLY_HARDENED ? 'Upload files into the current project' : 'Attach files'}
+            >
+              <svg className="h-5 w-5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828L18 9.828a4 4 0 10-5.656-5.656L5.757 10.757a6 6 0 108.486 8.486L20.5 13"
+                />
+              </svg>
+            </button>
 
             <div className="absolute right-16 top-1/2 -translate-y-1/2 transform sm:right-16" style={{ display: 'none' }}>
               <MicButton onTranscript={onTranscript} className="h-10 w-10 sm:h-10 sm:w-10" />
@@ -330,7 +387,7 @@ export default function ChatComposer({
 
             <button
               type="submit"
-              disabled={!input.trim() || isLoading}
+              disabled={!canSubmit || isLoading}
               onMouseDown={(event) => {
                 event.preventDefault();
                 onSubmit(event);

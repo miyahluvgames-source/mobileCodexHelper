@@ -42,7 +42,7 @@ The screenshot below shows the Windows desktop control tool:
 ```text
 Phone browser
    ↓
-Tailscale private HTTPS
+Tailscale tailnet HTTP
    ↓
 Local nginx reverse proxy
    ↓
@@ -50,6 +50,12 @@ Local claudecodeui with this project's patches
    ↓
 Codex sessions on your PC
 ```
+
+Notes:
+
+- the currently validated path in this repo is tailnet-internal `HTTP`, not `HTTPS`
+- if a browser or proxy upgrades the address to `https://...`, access may fail
+- see `docs/REMOTE_ACCESS.md` for the detailed remote-access guide
 
 ## Prerequisites
 
@@ -108,7 +114,8 @@ http://127.0.0.1:3001
 powershell -ExecutionPolicy Bypass -File scripts/enable-mobile-codex-remote.ps1
 ```
 
-3. Open the private HTTPS address shown by Tailscale
+3. Open the private address shown by Tailscale
+   Prefer `http://<hostname>`
 4. Log in with the account you just created
 5. If the phone waits for approval, approve the device in the desktop tool
 
@@ -396,6 +403,19 @@ Check:
 - `tmp/logs/mobile-codex-app.stdout.log`
 - `tmp/logs/mobile-codex-app.stderr.log`
 - nginx logs
+
+### 4. Mac / iPhone / iPad says the page is not working correctly
+
+Check these first:
+
+- are you opening `http://<hostname>` instead of `https://<hostname>`?
+- is the device in the same Tailscale tailnet?
+- is a local proxy intercepting `*.ts.net` or tailnet traffic?
+
+See also:
+
+- Chinese: `docs/REMOTE_ACCESS.zh-CN.md`
+- English: `docs/REMOTE_ACCESS.md`
 
 ### 4. Why not expose it directly to the public internet?
 

@@ -647,10 +647,6 @@ app.delete('/api/projects/:projectName', authenticateToken, async (req, res) => 
 
 // Create project endpoint
 app.post('/api/projects/create', authenticateToken, async (req, res) => {
-    if (CODEX_ONLY_HARDENED_MODE) {
-        return blockDisabledFeature(res, 'Project creation');
-    }
-
     try {
         const { path: projectPath } = req.body;
 
@@ -1441,6 +1437,7 @@ const uploadFilesHandler = async (req, res) => {
                 uploadedFiles.push({
                     name: fileName,
                     path: destPath,
+                    relativePath: path.relative(projectRoot, destPath).replace(/\\/g, '/'),
                     size: file.size,
                     mimeType: file.mimetype
                 });
@@ -1470,10 +1467,6 @@ const uploadFilesHandler = async (req, res) => {
 };
 
 app.post('/api/projects/:projectName/files/upload', authenticateToken, async (req, res, next) => {
-    if (CODEX_ONLY_HARDENED_MODE) {
-        return blockDisabledFeature(res, 'File upload');
-    }
-
     return uploadFilesHandler(req, res, next);
 });
 

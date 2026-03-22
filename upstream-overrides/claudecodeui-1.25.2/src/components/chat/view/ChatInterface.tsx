@@ -147,12 +147,16 @@ function ChatInterface({
     selectFile,
     attachedImages,
     setAttachedImages,
+    attachedFiles,
+    setAttachedFiles,
     uploadingImages,
     imageErrors,
     getRootProps,
     getInputProps,
     isDragActive,
-    openImagePicker,
+    openFilePicker,
+    filePickerRef,
+    handleFilePickerChange,
     handleSubmit,
     handleInputChange,
     handleKeyDown,
@@ -369,6 +373,12 @@ function ChatInterface({
               previous.filter((_, currentIndex) => currentIndex !== index),
             )
           }
+          attachedFiles={attachedFiles}
+          onRemoveFile={(index) =>
+            setAttachedFiles((previous) =>
+              previous.filter((_, currentIndex) => currentIndex !== index),
+            )
+          }
           uploadingImages={uploadingImages}
           imageErrors={imageErrors}
           showFileDropdown={showFileDropdown}
@@ -383,7 +393,9 @@ function ChatInterface({
           frequentCommands={commandQuery ? [] : frequentCommands}
           getRootProps={getRootProps as (...args: unknown[]) => Record<string, unknown>}
           getInputProps={getInputProps as (...args: unknown[]) => Record<string, unknown>}
-          openImagePicker={openImagePicker}
+          openFilePicker={openFilePicker}
+          filePickerRef={filePickerRef}
+          onFilePickerChange={handleFilePickerChange}
           inputHighlightRef={inputHighlightRef}
           renderInputWithMentions={renderInputWithMentions}
           textareaRef={textareaRef}
@@ -407,6 +419,7 @@ function ChatInterface({
                     : t('messageTypes.claude'),
           })}
           isTextareaExpanded={isTextareaExpanded}
+          canSubmit={Boolean(input.trim()) || attachedFiles.length > 0}
           sendByCtrlEnter={sendByCtrlEnter}
           onTranscript={handleTranscript}
         />
