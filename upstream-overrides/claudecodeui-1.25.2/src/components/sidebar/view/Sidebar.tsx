@@ -124,7 +124,19 @@ function Sidebar({
     document.body.classList.toggle('pwa-mode', isPWA);
   }, [isPWA]);
 
-  const handleProjectCreated = () => {
+  const handleProjectCreated = (createdProject?: Record<string, unknown>) => {
+    if (
+      typeof window !== 'undefined' &&
+      createdProject &&
+      typeof createdProject === 'object' &&
+      createdProject.pendingDesktopSession
+    ) {
+      sessionStorage.setItem(
+        'codexDesktopPendingBlankThread',
+        JSON.stringify(createdProject.pendingDesktopSession),
+      );
+    }
+
     if (window.refreshProjects) {
       void window.refreshProjects();
       return;

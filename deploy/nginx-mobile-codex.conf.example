@@ -3,6 +3,7 @@
     '' close;
 }
 
+client_max_body_size 64m;
 limit_req_zone $binary_remote_addr zone=mobile_codex_login:10m rate=5r/m;
 
 server {

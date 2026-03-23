@@ -10,8 +10,9 @@ import type {
   TouchEvent,
 } from 'react';
 import { useDropzone } from 'react-dropzone';
+import { useNavigate } from 'react-router-dom';
 import { api, authenticatedFetch } from '../../../utils/api';
-import { IS_CODEX_ONLY_HARDENED } from '../../../constants/config';
+import { IS_CODEX_DESKTOP_BRIDGE, IS_CODEX_ONLY_HARDENED } from '../../../constants/config';
 import { thinkingModes } from '../constants/thinkingModes';
 import { grantClaudeToolPermission } from '../utils/chatPermissions';
 import { safeLocalStorage } from '../utils/chatStorage';
@@ -122,6 +123,7 @@ export function useChatComposerState({
   setIsUserScrolledUp,
   setPendingPermissionRequests,
 }: UseChatComposerStateArgs) {
+  const navigate = useNavigate();
   const [input, setInput] = useState(() => {
     if (typeof window !== 'undefined' && selectedProject) {
       return safeLocalStorage.getItem(`draft_input_${selectedProject.name}`) || '';
@@ -694,7 +696,9 @@ export function useChatComposerState({
       setTimeout(() => scrollToBottom(), 100);
 
       const effectiveSessionId =
-        currentSessionId || selectedSession?.id || sessionStorage.getItem('cursorSessionId');
+        provider === 'codex'
+          ? selectedSession?.id || currentSessionId || null
+          : currentSessionId || selectedSession?.id || sessionStorage.getItem('cursorSessionId');
       const sessionToActivate = effectiveSessionId || `new-session-${Date.now()}`;
 
       if (!effectiveSessionId && !selectedSession?.id) {
@@ -736,6 +740,125 @@ export function useChatComposerState({
 
       const toolsSettings = getToolsSettings();
       const resolvedProjectPath = selectedProject.fullPath || selectedProject.path || '';
+      let codexDesktopPendingBlankThread: {
+        projectPath?: string;
+        knownSessionIds?: string[];
+      } | null = null;
+
+      if (provider === 'codex' && !effectiveSessionId && typeof window !== 'undefined') {
+        try {
+          const rawPendingBlankThread = sessionStorage.getItem('codexDesktopPendingBlankThread');
+          if (rawPendingBlankThread) {
+            const parsedPendingBlankThread = JSON.parse(rawPendingBlankThread);
+            const pendingProjectPath =
+              typeof parsedPendingBlankThread?.projectPath === 'string'
+                ? parsedPendingBlankThread.projectPath
+                : '';
+
+            if (
+              pendingProjectPath &&
+              pendingProjectPath.toLowerCase() === resolvedProjectPath.toLowerCase()
+            ) {
+              codexDesktopPendingBlankThread = parsedPendingBlankThread;
+            }
+          }
+        } catch (error) {
+          console.error('Error reading pending Codex desktop blank thread:', error);
+        }
+      }
+
+      if (
+        provider === 'codex' &&
+        IS_CODEX_DESKTOP_BRIDGE &&
+        !effectiveSessionId &&
+        codexDesktopPendingBlankThread
+      ) {
+        try {
+          const response = await api.sendCodexDesktopPendingMessage({
+            path: resolvedProjectPath,
+            command: messageContent,
+            pendingDesktopSession: codexDesktopPendingBlankThread,
+            model: codexModel,
+            permissionMode: permissionMode === 'plan' ? 'default' : permissionMode,
+            sessionTitle:
+              (typeof selectedSession?.title === 'string' && selectedSession.title.trim()) ||
+              (typeof selectedSession?.summary === 'string' && selectedSession.summary.trim()) ||
+              undefined,
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            throw new Error(
+              data?.details || data?.error || 'Failed to create and submit the desktop Codex session.',
+            );
+          }
+
+          const createdSessionId =
+            (typeof data?.actualSessionId === 'string' && data.actualSessionId) ||
+            (typeof data?.sessionId === 'string' && data.sessionId) ||
+            (typeof data?.createdSessionId === 'string' && data.createdSessionId) ||
+            null;
+
+          if (!createdSessionId) {
+            throw new Error('Desktop bridge completed without returning a session id.');
+          }
+
+          if (typeof window !== 'undefined') {
+            sessionStorage.removeItem('codexDesktopPendingBlankThread');
+            sessionStorage.setItem('pendingSessionId', createdSessionId);
+          }
+
+          if (pendingViewSessionRef.current) {
+            pendingViewSessionRef.current = {
+              sessionId: createdSessionId,
+              startedAt: Date.now(),
+            };
+          }
+
+          onSessionActive?.(createdSessionId);
+          onSessionProcessing?.(createdSessionId);
+
+          if (window.refreshProjects) {
+            await window.refreshProjects();
+          }
+
+          setInput('');
+          inputValueRef.current = '';
+          resetCommandMenuState();
+          setAttachedImages([]);
+          setAttachedFiles([]);
+          setUploadingImages(new Map());
+          setImageErrors(new Map());
+          setIsTextareaExpanded(false);
+          setThinkingMode('none');
+
+          if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+          }
+
+          safeLocalStorage.removeItem(`draft_input_${selectedProject.name}`);
+          setClaudeStatus(null);
+          setCanAbortSession(false);
+          setIsLoading(false);
+          navigate(`/session/${createdSessionId}`);
+          return;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          console.error('Desktop pending-session submit failed:', error);
+          setChatMessages((previous) => [
+            ...previous,
+            {
+              type: 'error',
+              content: `Failed to create desktop session: ${message}`,
+              timestamp: new Date(),
+            },
+          ]);
+          setClaudeStatus(null);
+          setCanAbortSession(false);
+          setIsLoading(false);
+          return;
+        }
+      }
 
       if (provider === 'cursor') {
         sendMessage({
@@ -760,8 +883,15 @@ export function useChatComposerState({
           options: {
             cwd: resolvedProjectPath,
             projectPath: resolvedProjectPath,
+            projectName: selectedProject.name,
+            projectDisplayName: selectedProject.displayName,
             sessionId: effectiveSessionId,
+            sessionTitle:
+              (typeof selectedSession?.title === 'string' && selectedSession.title.trim()) ||
+              (typeof selectedSession?.summary === 'string' && selectedSession.summary.trim()) ||
+              undefined,
             resume: Boolean(effectiveSessionId),
+            desktopPendingBlankThread: codexDesktopPendingBlankThread,
             model: codexModel,
             permissionMode: permissionMode === 'plan' ? 'default' : permissionMode,
           },
@@ -830,6 +960,7 @@ export function useChatComposerState({
       pendingViewSessionRef,
       permissionMode,
       provider,
+      navigate,
       resetCommandMenuState,
       scrollToBottom,
       selectedProject,

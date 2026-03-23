@@ -15,6 +15,32 @@ import {
 const MESSAGES_PER_PAGE = 20;
 const INITIAL_VISIBLE_MESSAGES = 100;
 
+const buildChatMessagesSignature = (messages: ChatMessage[]) =>
+  messages
+    .map((message) => {
+      const content = typeof message.content === 'string' ? message.content : '';
+      const toolName = typeof message.toolName === 'string' ? message.toolName : '';
+      const toolId = typeof message.toolId === 'string' ? message.toolId : '';
+      const timestamp =
+        typeof message.timestamp === 'string' || typeof message.timestamp === 'number'
+          ? String(message.timestamp)
+          : message.timestamp instanceof Date
+            ? message.timestamp.toISOString()
+            : '';
+
+      return [
+        message.type,
+        content,
+        toolName,
+        toolId,
+        message.isToolUse ? 'tool' : '',
+        message.isThinking ? 'thinking' : '',
+        message.isStreaming ? 'streaming' : '',
+        timestamp,
+      ].join('::');
+    })
+    .join('||');
+
 type PendingViewSession = {
   sessionId: string | null;
   startedAt: number;
@@ -184,6 +210,10 @@ export function useChatSessionState({
   const convertedMessages = useMemo(() => {
     return convertSessionMessages(sessionMessages);
   }, [sessionMessages]);
+  const convertedMessagesSignature = useMemo(
+    () => buildChatMessagesSignature(convertedMessages),
+    [convertedMessages],
+  );
 
   const scrollToBottom = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -301,6 +331,7 @@ export function useChatSessionState({
   }, [chatMessages.length]);
 
   const prevSessionMessagesLengthRef = useRef(0);
+  const prevConvertedMessagesSignatureRef = useRef('');
   const isInitialLoadRef = useRef(true);
 
   useEffect(() => {
@@ -311,6 +342,7 @@ export function useChatSessionState({
     topLoadLockRef.current = false;
     pendingScrollRestoreRef.current = null;
     prevSessionMessagesLengthRef.current = 0;
+    prevConvertedMessagesSignatureRef.current = '';
     isInitialLoadRef.current = true;
     setIsUserScrolledUp(false);
   }, [selectedProject?.name, selectedSession?.id]);
@@ -532,22 +564,17 @@ export function useChatSessionState({
   }, [pendingViewSessionRef, selectedSession?.id]);
 
   useEffect(() => {
-    // Only sync sessionMessages to chatMessages when:
-    // 1. Not currently loading (to avoid overwriting user's just-sent message)
-    // 2. SessionMessages actually changed (including from non-empty to empty)
-    // 3. Either it's initial load OR sessionMessages increased (new messages from server)
-    if (
-      sessionMessages.length !== prevSessionMessagesLengthRef.current &&
-      !isLoading
-    ) {
-      // Only update if this is initial load, sessionMessages grew, or was cleared to empty
-      if (isInitialLoadRef.current || sessionMessages.length === 0 || sessionMessages.length > prevSessionMessagesLengthRef.current) {
-        setChatMessages(convertedMessages);
-        isInitialLoadRef.current = false;
-      }
-      prevSessionMessagesLengthRef.current = sessionMessages.length;
+    if (isLoading) {
+      return;
     }
-  }, [convertedMessages, sessionMessages.length, isLoading, setChatMessages]);
+
+    if (convertedMessagesSignature !== prevConvertedMessagesSignatureRef.current) {
+      setChatMessages(convertedMessages);
+      prevConvertedMessagesSignatureRef.current = convertedMessagesSignature;
+      prevSessionMessagesLengthRef.current = sessionMessages.length;
+      isInitialLoadRef.current = false;
+    }
+  }, [convertedMessages, convertedMessagesSignature, sessionMessages.length, isLoading, setChatMessages]);
 
   useEffect(() => {
     if (selectedProject && chatMessages.length > 0) {

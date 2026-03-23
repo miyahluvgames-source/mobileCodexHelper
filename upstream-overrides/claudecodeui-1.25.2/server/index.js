@@ -940,6 +940,48 @@ app.get('/api/projects/:projectName/files/content', authenticateToken, async (re
     }
 });
 
+app.get('/api/local-file/content', authenticateToken, async (req, res) => {
+    try {
+        const { path: filePath } = req.query;
+
+        if (!filePath || typeof filePath !== 'string') {
+            return res.status(400).json({ error: 'Invalid file path' });
+        }
+
+        const resolved = path.resolve(filePath);
+        const stats = await fsPromises.stat(resolved);
+        if (!stats.isFile()) {
+            return res.status(400).json({ error: 'Path must point to a file' });
+        }
+
+        const mimeType = mime.lookup(resolved) || 'application/octet-stream';
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+
+        const fileStream = fs.createReadStream(resolved);
+        fileStream.pipe(res);
+
+        fileStream.on('error', (error) => {
+            console.error('Error streaming local file:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ error: 'Error reading file' });
+            }
+        });
+    } catch (error) {
+        console.error('Error serving local file:', error);
+        if (!res.headersSent) {
+            if (error.code === 'ENOENT') {
+                res.status(404).json({ error: 'File not found' });
+            } else if (error.code === 'EACCES') {
+                res.status(403).json({ error: 'Permission denied' });
+            } else {
+                res.status(500).json({ error: error.message });
+            }
+        }
+    }
+});
+
 // Save file content endpoint
 app.put('/api/projects/:projectName/file', authenticateToken, async (req, res) => {
     if (CODEX_ONLY_HARDENED_MODE) {

@@ -16,16 +16,107 @@
 import { Codex } from '@openai/codex-sdk';
 import crypto from 'crypto';
 import { promises as fs } from 'fs';
+import os from 'os';
 import path from 'path';
+import {
+  abortCodexDesktopBridgeSession,
+  getActiveCodexDesktopBridgeSessions,
+  isCodexDesktopBridgeEnabled,
+  isCodexDesktopBridgeSessionActive,
+  queryCodexDesktopBridge,
+} from './codex-desktop-bridge.js';
 
 // Track active sessions
 const activeCodexSessions = new Map();
 const CODEX_ONLY_HARDENED_MODE = process.env.CODEX_ONLY_HARDENED_MODE !== 'false';
+const CODEX_SESSION_INDEX_PATH = path.join(os.homedir(), '.codex', 'session_index.jsonl');
 
 const NON_ASCII_PATH_PATTERN = /[^\u0000-\u007F]/;
 
 function containsNonAscii(value) {
   return typeof value === 'string' && NON_ASCII_PATH_PATTERN.test(value);
+}
+
+function summarizeThreadName(command, fallback = 'Codex Session') {
+  if (typeof command !== 'string') {
+    return fallback;
+  }
+
+  const candidate = command
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .find((line) => {
+      const normalized = line.toLowerCase();
+      return normalized !== 'uploaded files:' &&
+        normalized !== 'please inspect these uploaded files:' &&
+        !normalized.startsWith('- ');
+    });
+
+  if (!candidate) {
+    return fallback;
+  }
+
+  return candidate.length > 80 ? `${candidate.slice(0, 77)}...` : candidate;
+}
+
+async function loadLatestSessionIndexTitle(sessionId) {
+  if (!sessionId) {
+    return null;
+  }
+
+  try {
+    const content = await fs.readFile(CODEX_SESSION_INDEX_PATH, 'utf8');
+    let latestTitle = null;
+    let latestUpdatedAt = 0;
+
+    for (const line of content.split(/\r?\n/)) {
+      if (!line.trim()) {
+        continue;
+      }
+
+      try {
+        const entry = JSON.parse(line);
+        if (entry.id !== sessionId || typeof entry.thread_name !== 'string' || !entry.thread_name.trim()) {
+          continue;
+        }
+
+        const updatedAt = entry.updated_at ? new Date(entry.updated_at).getTime() : 0;
+        if (updatedAt >= latestUpdatedAt) {
+          latestUpdatedAt = updatedAt;
+          latestTitle = entry.thread_name.trim();
+        }
+      } catch {
+        // Skip malformed rows.
+      }
+    }
+
+    return latestTitle;
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function appendSessionIndexEntry(sessionId, threadName) {
+  if (!sessionId) {
+    return;
+  }
+
+  const resolvedThreadName = threadName?.trim() || await loadLatestSessionIndexTitle(sessionId) || 'Codex Session';
+  await fs.mkdir(path.dirname(CODEX_SESSION_INDEX_PATH), { recursive: true });
+  await fs.appendFile(
+    CODEX_SESSION_INDEX_PATH,
+    `${JSON.stringify({
+      id: sessionId,
+      thread_name: resolvedThreadName,
+      updated_at: new Date().toISOString(),
+    })}\n`,
+    'utf8',
+  );
 }
 
 async function ensureAsciiWorkingDirectory(projectPath) {
@@ -181,7 +272,7 @@ function transformCodexEvent(event) {
     case 'thread.started':
       return {
         type: 'thread_started',
-        threadId: event.id
+        threadId: event.thread_id
       };
 
     case 'error':
@@ -230,13 +321,14 @@ function mapPermissionModeToCodexOptions(permissionMode) {
  * @param {object} options - Options including cwd, sessionId, model, permissionMode
  * @param {WebSocket|object} ws - WebSocket connection or response writer
  */
-export async function queryCodex(command, options = {}, ws) {
+async function queryCodexViaSdk(command, options = {}, ws) {
   const {
     sessionId,
     cwd,
     projectPath,
     model,
-    permissionMode = 'default'
+    permissionMode = 'default',
+    sessionTitle,
   } = options;
 
   const requestedWorkingDirectory = cwd || projectPath || process.cwd();
@@ -248,8 +340,10 @@ export async function queryCodex(command, options = {}, ws) {
 
   let codex;
   let thread;
-  let currentSessionId = sessionId;
+  let currentSessionId = sessionId || null;
+  let sessionMapKey = sessionId || `codex-pending-${Date.now()}`;
   const abortController = new AbortController();
+  const fallbackThreadTitle = summarizeThreadName(command, sessionTitle || 'Codex Session');
 
   try {
     // Initialize Codex SDK
@@ -272,23 +366,26 @@ export async function queryCodex(command, options = {}, ws) {
     }
 
     // Get the thread ID
-    currentSessionId = thread.id || sessionId || `codex-${Date.now()}`;
+    const resolvedThreadTitle = (sessionId && await loadLatestSessionIndexTitle(sessionId)) || sessionTitle || fallbackThreadTitle;
 
     // Track the session
-    activeCodexSessions.set(currentSessionId, {
+    activeCodexSessions.set(sessionMapKey, {
       thread,
       codex,
       status: 'running',
       abortController,
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
+      title: resolvedThreadTitle,
     });
 
-    // Send session created event
-    sendMessage(ws, {
-      type: 'session-created',
-      sessionId: currentSessionId,
-      provider: 'codex'
-    });
+    if (currentSessionId) {
+      await appendSessionIndexEntry(currentSessionId, resolvedThreadTitle);
+      sendMessage(ws, {
+        type: 'session-created',
+        sessionId: currentSessionId,
+        provider: 'codex'
+      });
+    }
 
     // Execute with streaming
     const streamedTurn = await thread.runStreamed(command, {
@@ -296,8 +393,28 @@ export async function queryCodex(command, options = {}, ws) {
     });
 
     for await (const event of streamedTurn.events) {
+      if (event.type === 'thread.started' && event.thread_id) {
+        const actualSessionId = event.thread_id;
+        if (!currentSessionId || currentSessionId !== actualSessionId) {
+          const session = activeCodexSessions.get(sessionMapKey);
+          if (session) {
+            activeCodexSessions.delete(sessionMapKey);
+            sessionMapKey = actualSessionId;
+            activeCodexSessions.set(sessionMapKey, session);
+          }
+
+          currentSessionId = actualSessionId;
+          await appendSessionIndexEntry(currentSessionId, resolvedThreadTitle);
+          sendMessage(ws, {
+            type: 'session-created',
+            sessionId: currentSessionId,
+            provider: 'codex'
+          });
+        }
+      }
+
       // Check if session was aborted
-      const session = activeCodexSessions.get(currentSessionId);
+      const session = activeCodexSessions.get(sessionMapKey);
       if (!session || session.status === 'aborted') {
         break;
       }
@@ -329,6 +446,7 @@ export async function queryCodex(command, options = {}, ws) {
     }
 
     // Send completion event
+    await appendSessionIndexEntry(currentSessionId, resolvedThreadTitle);
     sendMessage(ws, {
       type: 'codex-complete',
       sessionId: currentSessionId,
@@ -354,12 +472,20 @@ export async function queryCodex(command, options = {}, ws) {
   } finally {
     // Update session status
     if (currentSessionId) {
-      const session = activeCodexSessions.get(currentSessionId);
+      const session = activeCodexSessions.get(sessionMapKey);
       if (session) {
         session.status = session.status === 'aborted' ? 'aborted' : 'completed';
       }
     }
   }
+}
+
+export async function queryCodex(command, options = {}, ws) {
+  if (isCodexDesktopBridgeEnabled()) {
+    return queryCodexDesktopBridge(command, options, ws);
+  }
+
+  return queryCodexViaSdk(command, options, ws);
 }
 
 /**
@@ -368,6 +494,10 @@ export async function queryCodex(command, options = {}, ws) {
  * @returns {boolean} - Whether abort was successful
  */
 export function abortCodexSession(sessionId) {
+  if (abortCodexDesktopBridgeSession(sessionId)) {
+    return true;
+  }
+
   const session = activeCodexSessions.get(sessionId);
 
   if (!session) {
@@ -390,6 +520,10 @@ export function abortCodexSession(sessionId) {
  * @returns {boolean} - Whether session is active
  */
 export function isCodexSessionActive(sessionId) {
+  if (isCodexDesktopBridgeSessionActive(sessionId)) {
+    return true;
+  }
+
   const session = activeCodexSessions.get(sessionId);
   return session?.status === 'running';
 }
@@ -399,7 +533,7 @@ export function isCodexSessionActive(sessionId) {
  * @returns {Array} - Array of active session info
  */
 export function getActiveCodexSessions() {
-  const sessions = [];
+  const sessions = [...getActiveCodexDesktopBridgeSessions()];
 
   for (const [id, session] of activeCodexSessions.entries()) {
     if (session.status === 'running') {

@@ -207,18 +207,16 @@ function ChatInterface({
   // streaming events (e.g. from long tool calls while iOS had the tab backgrounded) are shown.
   // Also reset isLoading — if the server restarted or the session died mid-stream, the client
   // would be stuck in "Processing..." forever without this reset.
-  const handleWebSocketReconnect = useCallback(async () => {
+  const handleSessionResync = useCallback(async () => {
     if (!selectedProject || !selectedSession) return;
     const provider = selectedSession.__provider || (IS_CODEX_ONLY_HARDENED ? 'codex' : 'claude');
     const messages = await loadSessionMessages(selectedProject.name, selectedSession.id, false, provider);
-    if (messages && messages.length > 0) {
-      setChatMessages(messages);
-    }
+    setSessionMessages(Array.isArray(messages) ? messages : []);
     // Reset loading state — if the session is still active, new WebSocket messages will
     // set it back to true. If it died, this clears the permanent frozen state.
     setIsLoading(false);
     setCanAbortSession(false);
-  }, [selectedProject, selectedSession, loadSessionMessages, setChatMessages, setIsLoading, setCanAbortSession]);
+  }, [selectedProject, selectedSession, loadSessionMessages, setSessionMessages, setIsLoading, setCanAbortSession]);
 
   useChatRealtimeHandlers({
     latestMessage,
@@ -242,7 +240,7 @@ function ChatInterface({
     onSessionNotProcessing,
     onReplaceTemporarySession,
     onNavigateToSession,
-    onWebSocketReconnect: handleWebSocketReconnect,
+    onSessionResync: handleSessionResync,
   });
 
   useEffect(() => {

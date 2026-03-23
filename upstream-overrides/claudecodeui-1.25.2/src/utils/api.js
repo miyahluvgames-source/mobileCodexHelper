@@ -1,4 +1,4 @@
-import { IS_CODEX_ONLY_HARDENED, IS_PLATFORM } from "../constants/config";
+import { IS_CODEX_DESKTOP_BRIDGE, IS_CODEX_ONLY_HARDENED, IS_PLATFORM } from "../constants/config";
 import { getDeviceIdentity, getStoredDeviceSession } from "../components/auth/deviceTrust.js";
 
 // Utility function for authenticated API calls
@@ -107,9 +107,29 @@ export const api = {
     return `/api/search/conversations?${params.toString()}`;
   },
   createProject: (path) =>
-    authenticatedFetch('/api/projects/create', {
+    authenticatedFetch(
+      IS_CODEX_DESKTOP_BRIDGE ? '/api/codex/desktop/open-project' : '/api/projects/create',
+      {
+        method: 'POST',
+        body: JSON.stringify({ path }),
+      },
+    ),
+  createCodexDesktopSession: (path) =>
+    authenticatedFetch('/api/codex/desktop/create-session', {
       method: 'POST',
       body: JSON.stringify({ path }),
+    }),
+  sendCodexDesktopPendingMessage: ({ path, command, pendingDesktopSession, model, permissionMode, sessionTitle }) =>
+    authenticatedFetch('/api/codex/desktop/send-pending-message', {
+      method: 'POST',
+      body: JSON.stringify({
+        path,
+        command,
+        pendingDesktopSession,
+        model,
+        permissionMode,
+        sessionTitle,
+      }),
     }),
   createWorkspace: (workspaceData) =>
     authenticatedFetch('/api/projects/create-workspace', {

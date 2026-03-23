@@ -6,6 +6,14 @@ import os from 'os';
 import TOML from '@iarna/toml';
 import { getCodexSessions, getCodexSessionMessages, deleteCodexSession } from '../projects.js';
 import { applyCustomSessionNames, sessionNamesDb } from '../database/db.js';
+import {
+  getCodexDesktopBridgeStatus,
+} from '../codex-desktop-bridge.js';
+import {
+  createDesktopSessionViaHelper,
+  openDesktopProjectViaHelper,
+  queryDesktopBridgeViaHelper,
+} from '../codex-desktop-bridge-external.js';
 
 const router = express.Router();
 const CODEX_ONLY_HARDENED_MODE = process.env.CODEX_ONLY_HARDENED_MODE !== 'false';
@@ -89,6 +97,135 @@ router.get('/sessions/:sessionId/messages', async (req, res) => {
     res.json({ success: true, ...result });
   } catch (error) {
     console.error('Error fetching Codex session messages:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/desktop/current', async (req, res) => {
+  try {
+    const { projectPath } = req.query;
+    const status = await getCodexDesktopBridgeStatus(projectPath);
+    res.json({ success: true, ...status });
+  } catch (error) {
+    console.error('Error fetching Codex desktop bridge status:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/desktop/create-session', async (req, res) => {
+  try {
+    const projectPath = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+    if (!projectPath) {
+      return res.status(400).json({ success: false, error: 'path is required' });
+    }
+
+    const result = await createDesktopSessionViaHelper(projectPath);
+    res.json(result);
+  } catch (error) {
+    console.error('Error creating Codex desktop session:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/desktop/open-project', async (req, res) => {
+  try {
+    const projectPath = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+    if (!projectPath) {
+      return res.status(400).json({ success: false, error: 'path is required' });
+    }
+
+    const result = await openDesktopProjectViaHelper(projectPath);
+    res.json(result);
+  } catch (error) {
+    console.error('Error opening Codex desktop project:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/desktop/send-pending-message', async (req, res) => {
+  try {
+    const projectPath = typeof req.body?.path === 'string' ? req.body.path.trim() : '';
+    const command = typeof req.body?.command === 'string' ? req.body.command : '';
+    const pendingDesktopSession =
+      req.body?.pendingDesktopSession && typeof req.body.pendingDesktopSession === 'object'
+        ? req.body.pendingDesktopSession
+        : null;
+
+    if (!projectPath) {
+      return res.status(400).json({ success: false, error: 'path is required' });
+    }
+
+    if (!command.trim()) {
+      return res.status(400).json({ success: false, error: 'command is required' });
+    }
+
+    if (!pendingDesktopSession) {
+      return res.status(400).json({ success: false, error: 'pendingDesktopSession is required' });
+    }
+
+    const pendingProjectPath =
+      typeof pendingDesktopSession.projectPath === 'string' ? pendingDesktopSession.projectPath.trim() : '';
+
+    if (
+      pendingProjectPath &&
+      pendingProjectPath.toLowerCase() !== projectPath.toLowerCase()
+    ) {
+      return res.status(400).json({
+        success: false,
+        error: 'pendingDesktopSession.projectPath does not match path',
+      });
+    }
+
+    let createdSessionId = null;
+    let completedSessionId = null;
+    let actualSessionId = null;
+
+    await queryDesktopBridgeViaHelper(
+      command,
+      {
+        cwd: projectPath,
+        projectPath,
+        sessionId: null,
+        resume: false,
+        model: typeof req.body?.model === 'string' ? req.body.model : undefined,
+        sessionTitle:
+          typeof req.body?.sessionTitle === 'string' ? req.body.sessionTitle : undefined,
+        permissionMode:
+          typeof req.body?.permissionMode === 'string' ? req.body.permissionMode : undefined,
+        desktopPendingBlankThread: pendingDesktopSession,
+      },
+      {
+        send(data) {
+          if (data?.type === 'session-created' && typeof data.sessionId === 'string') {
+            createdSessionId = data.sessionId;
+          }
+
+          if (data?.type === 'codex-complete') {
+            if (typeof data.sessionId === 'string' && data.sessionId) {
+              completedSessionId = data.sessionId;
+            }
+
+            if (typeof data.actualSessionId === 'string' && data.actualSessionId) {
+              actualSessionId = data.actualSessionId;
+            }
+          }
+        },
+      },
+    );
+
+    const sessionId = actualSessionId || completedSessionId || createdSessionId;
+    if (!sessionId) {
+      throw new Error('Desktop bridge completed without returning a session id.');
+    }
+
+    res.json({
+      success: true,
+      sessionId,
+      createdSessionId,
+      actualSessionId,
+    });
+  } catch (error) {
+    console.error('Error sending first message for pending Codex desktop session:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

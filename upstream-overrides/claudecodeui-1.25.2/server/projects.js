@@ -67,8 +67,12 @@ import { open } from 'sqlite';
 import os from 'os';
 import sessionManager from './sessionManager.js';
 import { applyCustomSessionNames } from './database/db.js';
+import { getPendingDesktopProjects } from './codex-desktop-bridge-state.js';
 
 const CODEX_ONLY_HARDENED_MODE = process.env.CODEX_ONLY_HARDENED_MODE !== 'false';
+const CODEX_DESKTOP_BRIDGE_MODE =
+  process.env.CODEX_DESKTOP_BRIDGE_MODE === 'true' ||
+  process.env.CODEX_DESKTOP_BRIDGE_MODE == null;
 
 // Import TaskMaster detection functions
 async function detectTaskMasterFolder(projectPath) {
@@ -330,6 +334,88 @@ async function buildCodexProjectMetadataLookup(config) {
   return metadataByPath;
 }
 
+function isDesktopBridgeRelevantProjectPath(projectPath) {
+  const normalizedPath = resolveProjectPath(projectPath);
+  if (!normalizedPath) {
+    return false;
+  }
+
+  const lowerPath = normalizedPath.toLowerCase();
+  if (lowerPath.startsWith('c:\\windows\\')) {
+    return false;
+  }
+
+  return true;
+}
+
+async function getCodexDesktopBridgeScope() {
+  if (!CODEX_DESKTOP_BRIDGE_MODE) {
+    return {
+      projectPathsInOrder: [],
+      sessionIdsByProject: new Map(),
+    };
+  }
+
+  const stateDbPath = path.join(os.homedir(), '.codex', 'state_5.sqlite');
+  let db;
+
+  try {
+    db = await open({
+      filename: stateDbPath,
+      driver: sqlite3.Database,
+    });
+
+    const threadRows = await db.all(
+      `SELECT id, cwd, updated_at
+       FROM threads
+       WHERE archived = 0
+         AND source = 'vscode'
+       ORDER BY updated_at DESC
+       LIMIT 200`,
+    );
+
+    const sessionIdsByProject = new Map();
+    const projectPathsInOrder = [];
+
+    for (const row of threadRows) {
+      const normalizedProjectPath = normalizeComparablePath(
+        resolveProjectPath(row?.cwd) || row?.cwd || '',
+      );
+
+      if (!normalizedProjectPath || !isDesktopBridgeRelevantProjectPath(normalizedProjectPath)) {
+        continue;
+      }
+
+      const sessionId = typeof row?.id === 'string' ? row.id.trim() : '';
+      if (!sessionId) {
+        continue;
+      }
+
+      if (!sessionIdsByProject.has(normalizedProjectPath)) {
+        sessionIdsByProject.set(normalizedProjectPath, []);
+        projectPathsInOrder.push(normalizedProjectPath);
+      }
+
+      sessionIdsByProject.get(normalizedProjectPath).push(sessionId);
+    }
+
+    return {
+      projectPathsInOrder,
+      sessionIdsByProject,
+    };
+  } catch (error) {
+    console.warn('Could not resolve current Codex Desktop project path:', error.message);
+    return {
+      projectPathsInOrder: [],
+      sessionIdsByProject: new Map(),
+    };
+  } finally {
+    if (db) {
+      await db.close();
+    }
+  }
+}
+
 async function getCodexOnlyProjects(progressCallback, config, codexSessionsIndexRef) {
   if (codexSessionsIndexRef && !codexSessionsIndexRef.sessionsByProject) {
     codexSessionsIndexRef.sessionsByProject = await buildCodexSessionsIndex();
@@ -337,13 +423,37 @@ async function getCodexOnlyProjects(progressCallback, config, codexSessionsIndex
 
   const sessionsByProject = codexSessionsIndexRef?.sessionsByProject || await buildCodexSessionsIndex();
   const metadataByPath = await buildCodexProjectMetadataLookup(config);
-  const projectEntries = Array.from(sessionsByProject.entries());
+  const desktopBridgeScope = await getCodexDesktopBridgeScope();
+  const scopedProjectPaths = new Set(desktopBridgeScope.projectPathsInOrder);
+  const projectEntries = Array.from(sessionsByProject.entries()).filter(([normalizedProjectPath]) => {
+    if (scopedProjectPaths.size === 0) {
+      return true;
+    }
+
+    return scopedProjectPaths.has(normalizedProjectPath);
+  });
   const projects = [];
   const totalProjects = projectEntries.length;
   let processedProjects = 0;
 
   for (const [normalizedProjectPath, sessions] of projectEntries) {
     processedProjects++;
+
+    const desktopThreadOrder = new Map(
+      (desktopBridgeScope.sessionIdsByProject.get(normalizedProjectPath) || []).map((sessionId, index) => [sessionId, index]),
+    );
+    const scopedSessions = desktopThreadOrder.size > 0
+      ? sessions
+          .filter((session) => desktopThreadOrder.has(session.id))
+          .sort((leftSession, rightSession) => {
+            return (desktopThreadOrder.get(leftSession.id) ?? Number.MAX_SAFE_INTEGER)
+              - (desktopThreadOrder.get(rightSession.id) ?? Number.MAX_SAFE_INTEGER);
+          })
+      : sessions;
+
+    if (scopedSessions.length === 0) {
+      continue;
+    }
 
     const actualProjectDir = resolveProjectPath(sessions[0]?.cwd) || sessions[0]?.cwd || '';
     const matchedMetadata = metadataByPath.get(normalizedProjectPath);
@@ -374,14 +484,54 @@ async function getCodexOnlyProjects(progressCallback, config, codexSessionsIndex
       isManuallyAdded: Boolean(matchedMetadata?.isManuallyAdded),
       sessions: [],
       cursorSessions: [],
-      codexSessions: [...sessions],
+      codexSessions: [...scopedSessions],
       geminiSessions: [],
       sessionMeta: {
         hasMore: false,
-        total: sessions.length
+        total: scopedSessions.length
       },
       taskmaster: null
     });
+  }
+
+  const existingProjectPaths = new Set(
+    projects.map((project) => normalizeComparablePath(resolveProjectPath(project.fullPath || project.path || ''))),
+  );
+  for (const pendingProject of getPendingDesktopProjects()) {
+    const normalizedPendingPath = normalizeComparablePath(
+      resolveProjectPath(pendingProject.projectPath) || pendingProject.projectPath || '',
+    );
+    if (!normalizedPendingPath || existingProjectPaths.has(normalizedPendingPath)) {
+      continue;
+    }
+
+    const projectName =
+      metadataByPath.get(normalizedPendingPath)?.name ||
+      encodeProjectNameFromPath(pendingProject.projectPath);
+    const displayName =
+      metadataByPath.get(normalizedPendingPath)?.displayName ||
+      pendingProject.displayName ||
+      (await generateDisplayName(projectName, pendingProject.projectPath));
+
+    projects.push({
+      name: projectName,
+      path: pendingProject.projectPath,
+      displayName,
+      fullPath: pendingProject.projectPath,
+      isCustomName: Boolean(metadataByPath.get(normalizedPendingPath)?.displayName),
+      isManuallyAdded: Boolean(metadataByPath.get(normalizedPendingPath)?.isManuallyAdded),
+      sessions: [],
+      cursorSessions: [],
+      codexSessions: [],
+      geminiSessions: [],
+      sessionMeta: {
+        hasMore: false,
+        total: 0,
+      },
+      taskmaster: null,
+      pendingDesktopBridge: true,
+    });
+    existingProjectPaths.add(normalizedPendingPath);
   }
 
   projects.sort((leftProject, rightProject) => {
@@ -469,6 +619,41 @@ async function generateDisplayName(projectName, actualProjectDir = null) {
   return projectPath;
 }
 
+function decodeProjectNameFallback(projectName) {
+  if (!projectName || typeof projectName !== 'string') {
+    return '';
+  }
+
+  const windowsDriveMatch = projectName.match(/^([A-Za-z])--(.*)$/);
+  if (windowsDriveMatch) {
+    const [, driveLetter, remainder] = windowsDriveMatch;
+    return `${driveLetter}:/${remainder.replace(/-/g, '/')}`;
+  }
+
+  return projectName.replace(/-/g, '/');
+}
+
+async function resolveProjectDirectoryFromCodexSessions(projectName) {
+  try {
+    const sessionsByProject = await buildCodexSessionsIndex();
+
+    for (const sessions of sessionsByProject.values()) {
+      const candidatePath = resolveProjectPath(sessions?.[0]?.cwd) || sessions?.[0]?.cwd || '';
+      if (!candidatePath) {
+        continue;
+      }
+
+      if (encodeProjectNameFromPath(candidatePath) === projectName) {
+        return candidatePath;
+      }
+    }
+  } catch (error) {
+    console.warn(`Could not resolve Codex project directory for ${projectName}:`, error.message);
+  }
+
+  return null;
+}
+
 // Extract the actual project directory from JSONL sessions (with caching)
 async function extractProjectDirectory(projectName) {
   // Check cache first
@@ -479,10 +664,17 @@ async function extractProjectDirectory(projectName) {
   // Check project config for originalPath (manually added projects via UI or platform)
   // This handles projects with dashes in their directory names correctly
   const config = await loadProjectConfig();
-  if (config[projectName]?.originalPath) {
-    const originalPath = config[projectName].originalPath;
-    projectDirectoryCache.set(projectName, originalPath);
-    return originalPath;
+  const configuredPath = config[projectName]?.originalPath || config[projectName]?.path;
+  if (configuredPath) {
+    const resolvedConfiguredPath = resolveProjectPath(configuredPath) || configuredPath;
+    projectDirectoryCache.set(projectName, resolvedConfiguredPath);
+    return resolvedConfiguredPath;
+  }
+
+  const codexProjectPath = await resolveProjectDirectoryFromCodexSessions(projectName);
+  if (codexProjectPath) {
+    projectDirectoryCache.set(projectName, codexProjectPath);
+    return codexProjectPath;
   }
 
   const projectDir = path.join(os.homedir(), '.claude', 'projects', projectName);
@@ -500,7 +692,7 @@ async function extractProjectDirectory(projectName) {
 
     if (jsonlFiles.length === 0) {
       // Fall back to decoded project name if no sessions
-      extractedPath = projectName.replace(/-/g, '/');
+      extractedPath = decodeProjectNameFallback(projectName);
     } else {
       // Process all JSONL files to collect cwd values
       for (const file of jsonlFiles) {
@@ -537,7 +729,7 @@ async function extractProjectDirectory(projectName) {
       // Determine the best cwd to use
       if (cwdCounts.size === 0) {
         // No cwd found, fall back to decoded project name
-        extractedPath = projectName.replace(/-/g, '/');
+        extractedPath = decodeProjectNameFallback(projectName);
       } else if (cwdCounts.size === 1) {
         // Only one cwd, use it
         extractedPath = Array.from(cwdCounts.keys())[0];
@@ -561,7 +753,7 @@ async function extractProjectDirectory(projectName) {
 
         // Fallback (shouldn't reach here)
         if (!extractedPath) {
-          extractedPath = latestCwd || projectName.replace(/-/g, '/');
+          extractedPath = latestCwd || decodeProjectNameFallback(projectName);
         }
       }
     }
@@ -574,11 +766,11 @@ async function extractProjectDirectory(projectName) {
   } catch (error) {
     // If the directory doesn't exist, just use the decoded project name
     if (error.code === 'ENOENT') {
-      extractedPath = projectName.replace(/-/g, '/');
+      extractedPath = decodeProjectNameFallback(projectName);
     } else {
       console.error(`Error extracting project directory for ${projectName}:`, error);
       // Fall back to decoded project name for other errors
-      extractedPath = projectName.replace(/-/g, '/');
+      extractedPath = decodeProjectNameFallback(projectName);
     }
 
     // Cache the fallback result too

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 import { api } from '../utils/api';
-import { IS_CODEX_ONLY_HARDENED } from '../constants/config';
+import { IS_CODEX_DESKTOP_BRIDGE, IS_CODEX_ONLY_HARDENED } from '../constants/config';
 import type {
   AppSocketMessage,
   AppTab,
@@ -426,17 +426,47 @@ export function useProjectsState({
   );
 
   const handleNewSession = useCallback(
-    (project: Project) => {
-      setSelectedProject(project);
-      setSelectedSession(null);
-      setActiveTab('chat');
-      navigate('/');
+    async (project: Project) => {
+      try {
+        if (IS_CODEX_DESKTOP_BRIDGE) {
+          const projectPath = project.fullPath || project.path || '';
+          const response = await api.createCodexDesktopSession(projectPath);
+          const data = await response.json();
 
-      if (isMobile) {
-        setSidebarOpen(false);
+          if (!response.ok) {
+            throw new Error(data?.details || data?.error || 'Failed to create a desktop-bound Codex session');
+          }
+
+          if (typeof window !== 'undefined') {
+            if (data?.pendingDesktopSession) {
+              sessionStorage.setItem(
+                'codexDesktopPendingBlankThread',
+                JSON.stringify(data.pendingDesktopSession),
+              );
+            } else {
+              sessionStorage.removeItem('codexDesktopPendingBlankThread');
+            }
+          }
+
+          await refreshProjectsSilently();
+        }
+
+        setSelectedProject(project);
+        setSelectedSession(null);
+        setActiveTab('chat');
+        navigate('/');
+
+        if (isMobile) {
+          setSidebarOpen(false);
+        }
+      } catch (error) {
+        console.error('Error creating desktop-bound session:', error);
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert(error instanceof Error ? error.message : 'Failed to create a desktop-bound session.');
+        }
       }
     },
-    [isMobile, navigate],
+    [isMobile, navigate, refreshProjectsSilently],
   );
 
   const handleSessionDelete = useCallback(
